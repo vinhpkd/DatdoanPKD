@@ -19,18 +19,19 @@ node server.js
 
 Mở http://localhost:3000. Người cùng wifi vào bằng `http://<IP máy bạn>:3000`.
 
-## Đưa lên mạng (miễn phí) bằng Render
+## Chạy trên GitHub (Codespaces), không cần web nào khác
 
-1. Code nằm trên GitHub (repo này).
-2. Vào https://render.com, đăng nhập bằng GitHub.
-3. Bấm **New → Blueprint**, chọn repo này, bấm **Apply**. Render đọc `render.yaml` và tự cấu hình (gói Free, máy chủ Singapore).
-4. Khoảng 2 phút sau có link dạng `https://dat-mon-chung-xxxx.onrender.com`. Gửi link cho cả nhóm.
+1. Mở repo này trên github.com, bấm nút xanh **Code → Codespaces → Create codespace on main**.
+2. Đợi khoảng 1 phút. Web tự chạy, tab **Ports** hiện cổng `3000` với link dạng `https://<tên>-3000.app.github.dev`. Bấm vào để mở.
+3. Gửi link đó cho cả nhóm. Cổng đã được đặt **Public** nên ai cũng mở được, không cần tài khoản GitHub.
 
-Mỗi lần code trên GitHub thay đổi, Render tự cập nhật.
+Lần sau chỉ cần vào **Code → Codespaces**, bấm vào codespace cũ để bật lại (link giữ nguyên, quán và đơn vẫn còn).
 
-Lưu ý gói Free: web ngủ sau 15 phút không ai vào (mở lại mất 30 đến 60 giây) và mất dữ liệu khi ngủ. Quán chỉ cần mở lại, còn đơn cũ sẽ mất. Muốn giữ lâu dài: gắn Disk ở `/data` và đặt biến `DATA_DIR=/data`.
+Lưu ý: Codespace tự tắt sau 30 phút không ai dùng (đổi lên tối đa 4 giờ ở github.com/settings/codespaces, mục *Default idle timeout*). Tài khoản GitHub miễn phí có 60 giờ chạy mỗi tháng. Nếu cổng chưa Public: chuột phải cổng 3000 ở tab Ports, chọn *Port Visibility → Public*.
 
-> Không chạy được bằng GitHub Pages: trình duyệt không được phép gọi thẳng API của ShopeeFood, nên cần một máy chủ nhỏ (`server.js`) đứng giữa.
+> GitHub Pages không chạy được web này: Pages chỉ chứa trang tĩnh, trình duyệt không được phép tự gọi API của ShopeeFood, và đơn chung tức thì cần một máy chủ (`server.js`).
+
+Muốn có link luôn sống thì có thể đưa repo lên Render (file `render.yaml` có sẵn: New → Blueprint → chọn repo).
 
 ## Biến môi trường
 
