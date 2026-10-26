@@ -1,173 +1,157 @@
-// Đặt Món Chung — group food ordering from a ShopeeFood link.
-// No dependencies: needs Node.js 18 or newer. Run with `node server.js`.
+// Đặt Món Chung — chọn một quán bất kỳ trên ShopeeFood, cả nhóm cùng chọn món, ai cũng thấy ngay.
+// Không cần cài thư viện: chỉ cần Node.js 18 trở lên. Chạy bằng `node server.js`.
 //
-//   PORT        port to listen on (default 3000)
-//   DATA_DIR    folder for data.json (default ./data)
-//   GAPP_BASE   ShopeeFood API base (default https://gappapi.deliverynow.vn/api/)
+//   PORT        cổng (mặc định 3000)
+//   DATA_DIR    thư mục lưu data.json (mặc định ./data)
+//   GAPP_BASE   API của ShopeeFood (mặc định https://gappapi.deliverynow.vn/api/)
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const GAPP_BASE = process.env.GAPP_BASE || 'https://gappapi.deliverynow.vn/api/';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const KEEP_DAYS = 14;
 
-// ---------- storage ----------
-let db = { shops: {}, orders: [] };
-// True when the server starts with no saved data (e.g. a free host wiped its disk).
-// Browsers that remember menus then send them back, see restoreShops() in index.html.
-const freshBoot = !fs.existsSync(DATA_FILE);
-try { db = { shops: {}, orders: [], ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) }; } catch (e) { /* first run */ }
+// Thành phố trên ShopeeFood: id dùng cho API tìm quán, slug là phần đầu link quán.
+const CITIES = [
+  { id: 217, slug: 'ho-chi-minh', name: 'TP. Hồ Chí Minh' },
+  { id: 218, slug: 'ha-noi', name: 'Hà Nội' },
+  { id: 219, slug: 'da-nang', name: 'Đà Nẵng' },
+  { id: 220, slug: 'can-tho', name: 'Cần Thơ' },
+  { id: 221, slug: 'hai-phong', name: 'Hải Phòng' },
+];
+
+// ---------- lưu trữ ----------
+// shops[key] = menu đã lấy; orders[key][dishId][tên] = số lượng
+let db = { shops: {}, orders: {} };
+try { db = { shops: {}, orders: {}, ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) }; } catch (e) { /* lần chạy đầu */ }
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    const cutoff = Date.now() - KEEP_DAYS * 864e5;
-    db.orders = db.orders.filter((o) => o.at > cutoff);
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = DATA_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, DATA_FILE);
+    fs.writeFileSync(DATA_FILE + '.tmp', JSON.stringify(db));
+    fs.renameSync(DATA_FILE + '.tmp', DATA_FILE);
   }, 200);
 }
 
-// ---------- live updates (Server-Sent Events) ----------
-// Menus are big and change rarely, orders are small and change often, so they go out as separate events.
-const clients = new Set();
-const shopList = () => Object.values(db.shops).sort((a, b) => a.addedAt - b.addedAt);
-const shopsMsg = () => 'event: shops\ndata: ' + JSON.stringify({ shops: shopList(), freshBoot: freshBoot && !shopList().length }) + '\n\n';
-const ordersMsg = () => 'event: orders\ndata: ' + JSON.stringify({ orders: db.orders }) + '\n\n';
-function broadcast(msg) { for (const res of clients) res.write(msg); }
-function shopsChanged() { save(); broadcast(shopsMsg()); broadcast(ordersMsg()); }
-function ordersChanged() { save(); broadcast(ordersMsg()); }
-setInterval(() => broadcast(': ping\n\n'), 25000);
+// ---------- cập nhật tức thì (Server-Sent Events) ----------
+// Mỗi trình duyệt nghe một quán; khi ai đó bấm +/−, mọi người đang xem quán đó nhận số mới ngay.
+const listeners = new Map(); // key quán -> Set(res)
+function push(key) {
+  const msg = 'data: ' + JSON.stringify({ orders: db.orders[key] || {} }) + '\n\n';
+  for (const res of listeners.get(key) || []) res.write(msg);
+}
+setInterval(() => { for (const set of listeners.values()) for (const res of set) res.write(': ping\n\n'); }, 25000);
 
 // ---------- ShopeeFood ----------
-const FOODY_HEADERS = {
+const HEADERS = {
   'x-foody-client-id': '', 'x-foody-client-type': '1', 'x-foody-app-type': '1004', 'x-foody-client-version': '3.0.0',
   'x-foody-api-version': '1', 'x-foody-client-language': 'vi', 'x-foody-access-token': '',
-  'accept': 'application/json, text/plain, */*', 'origin': 'https://shopeefood.vn', 'referer': 'https://shopeefood.vn/',
-  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'accept': 'application/json, text/plain, */*', 'content-type': 'application/json;charset=UTF-8',
+  'origin': 'https://shopeefood.vn', 'referer': 'https://shopeefood.vn/',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
 };
-async function gapp(p) {
+async function gapp(p, body) {
   try {
-    const r = await fetch(GAPP_BASE + p, { headers: FOODY_HEADERS, signal: AbortSignal.timeout(15000) });
+    const r = await fetch(GAPP_BASE + p, {
+      method: body ? 'POST' : 'GET', headers: HEADERS, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000),
+    });
     if (!r.ok) { console.warn('ShopeeFood', r.status, p); return null; }
     const j = await r.json();
     return (j && j.reply) || null;
   } catch (e) { console.warn('ShopeeFood', e.message, p); return null; }
 }
 
-// Returns {id, slug} from a shopeefood.vn link, following share/short links when needed.
-async function parseLink(raw) {
-  let u;
-  try { u = new URL(String(raw || '').trim()); } catch (e) { return null; }
-  if (!/(^|\.)(shopeefood\.vn|now\.vn|foody\.vn|shopee\.vn|shp\.ee)$/.test(u.hostname)) return null;
-  const fromUrl = (x) => {
-    if (!/(^|\.)(shopeefood\.vn|now\.vn)$/.test(x.hostname)) return null;
-    const m = x.pathname.match(/\/shop\/(\d+)/);
-    if (m) return { id: m[1], slug: '' };
-    const slug = x.pathname.replace(/^\/+|\/+$/g, '');
-    return slug && slug.includes('/') ? { id: '', slug } : null;
-  };
-  const direct = fromUrl(u);
-  if (direct) return direct;
-  try { // short link: follow redirects and look at where it lands
-    const r = await fetch(u, { redirect: 'follow', headers: { 'user-agent': FOODY_HEADERS['user-agent'] }, signal: AbortSignal.timeout(10000) });
-    return fromUrl(new URL(r.url));
-  } catch (e) { return null; }
-}
-
-const priceOf = (p) => (p && typeof p.value === 'number') ? p.value : (p ? Number(String(p.text || '').replace(/\D/g, '')) || 0 : 0);
 const str = (x, n) => String(x == null ? '' : x).slice(0, n);
-// ShopeeFood lists each photo in several sizes; take the smallest one that is still sharp in a 72px box.
+const priceOf = (p) => (p && typeof p.value === 'number') ? p.value : (p ? Number(String(p.text || '').replace(/\D/g, '')) || 0 : 0);
+// ShopeeFood trả mỗi ảnh nhiều cỡ; lấy cỡ nhỏ nhất vẫn nét.
 function photoOf(photos) {
   const list = (Array.isArray(photos) ? photos : []).filter((p) => p && p.value).sort((a, b) => (a.width || 0) - (b.width || 0));
   const p = list.find((x) => (x.width || 0) >= 120) || list[list.length - 1];
   return p ? p.value : '';
 }
 
-// `id` comes from links like shopeefood.vn/now-food/shop/1265033, which carry the delivery id;
-// `rid` is a restaurant id we stored earlier (used by "Cập nhật menu").
-async function fetchShop({ id, slug, rid: knownRid }) {
-  let det = null, did = null, rid = knownRid || null;
-  if (slug) { const r = await gapp('delivery/get_from_url?url=' + encodeURIComponent(slug)); if (r) { did = r.delivery_id || null; rid = r.restaurant_id || rid; } }
-  if (id && !did) { const r = await gapp('delivery/get_detail?id_type=2&request_id=' + id); det = r && r.delivery_detail; if (det) { did = id; rid = det.restaurant_id || rid; } }
-  if (id && !did && !rid) rid = id; // maybe it was a restaurant id after all
-  if (rid && !did) { const r = await gapp('delivery/get_detail?id_type=1&request_id=' + rid); det = r && r.delivery_detail; if (det) did = det.delivery_id; }
-  if (did && !det) { const r = await gapp('delivery/get_detail?id_type=2&request_id=' + did); det = r && r.delivery_detail; }
+// Tìm quán theo từ khoá trong một thành phố. Trả về [{name, address, photo, did, rid, url}].
+async function searchShops(keyword, cityId) {
+  const found = await gapp('delivery/search_global', {
+    category_group: 1, city_id: cityId, delivery_only: true, keyword, sort_type: 1, foody_services: [1], full_restaurant_ids: true,
+  });
+  const results = (found && (found.search_result || found.search_results)) || [];
+  const ids = [...new Set([].concat(...results.map((x) => x.restaurant_ids || [])))].slice(0, 30);
+  if (!ids.length) return [];
+  const info = await gapp('delivery/get_infos', { restaurant_ids: ids, city_id: cityId });
+  const city = CITIES.find((c) => c.id === cityId);
+  return ((info && info.delivery_infos) || []).map((d) => ({
+    name: str(d.name, 120), address: str(d.address, 200), photo: photoOf(d.photos),
+    did: d.delivery_id || '', rid: d.restaurant_id || '',
+    url: d.url ? (String(d.url).startsWith('http') ? d.url : 'https://shopeefood.vn/' + String(d.url).replace(/^\/+/, ''))
+      : (d.url_rewrite_name && city ? 'https://shopeefood.vn/' + city.slug + '/' + d.url_rewrite_name : ''),
+    open: d.is_open !== false && !(d.delivery && d.delivery.is_open === false),
+  })).filter((d) => d.name && (d.did || d.rid));
+}
+
+// Đọc link quán: shopeefood.vn/now-food/shop/1265033 (mã giao hàng) hoặc shopeefood.vn/ha-noi/ten-quan.
+// Link rút gọn (shp.ee, s.shopee.vn) thì đi theo chuyển hướng.
+async function parseLink(raw) {
+  let u;
+  try { u = new URL(String(raw || '').trim()); } catch (e) { return null; }
+  const read = (x) => {
+    if (!/(^|\.)(shopeefood\.vn|now\.vn)$/.test(x.hostname)) return null;
+    const m = x.pathname.match(/\/shop\/(\d+)/);
+    if (m) return { did: m[1] };
+    const slug = x.pathname.replace(/^\/+|\/+$/g, '');
+    return slug.split('/').length === 2 ? { slug } : null;
+  };
+  if (read(u)) return read(u);
+  if (!/(^|\.)(shopee\.vn|shp\.ee|foody\.vn)$/.test(u.hostname)) return null;
+  try {
+    const r = await fetch(u, { redirect: 'follow', headers: { 'user-agent': HEADERS['user-agent'] }, signal: AbortSignal.timeout(10000) });
+    return read(new URL(r.url));
+  } catch (e) { return null; }
+}
+
+// Lấy toàn bộ menu. Nhận {did} (mã giao hàng), {rid} (mã quán) hoặc {slug}; thiếu cái nào thì tra cái đó.
+async function fetchShop({ did, rid, slug }) {
+  let det = null;
+  if (slug && !did) { const r = await gapp('delivery/get_from_url?url=' + encodeURIComponent(slug)); if (r) { did = r.delivery_id; rid = rid || r.restaurant_id; } }
+  if (did) { const r = await gapp('delivery/get_detail?id_type=2&request_id=' + did); det = r && r.delivery_detail; }
+  if (!det && rid) { const r = await gapp('delivery/get_detail?id_type=1&request_id=' + rid); det = r && r.delivery_detail; }
+  if (det) { did = did || det.delivery_id; rid = rid || det.restaurant_id; }
   let menu = did ? await gapp('dish/get_delivery_dishes?id_type=2&request_id=' + did) : null;
   if (!(menu && menu.menu_infos && menu.menu_infos.length) && rid) menu = await gapp('dish/get_delivery_dishes?id_type=1&request_id=' + rid);
-  const infos = (menu && menu.menu_infos) || [];
-  if (!infos.length) return null;
-  return normalizeMenu({
-    id: String(rid || did || id || ''), name: det && det.name, address: det && det.address, photo: det && photoOf(det.photos),
-    categories: infos.map((c) => ({
-      name: c.dish_type_name,
-      dishes: (c.dishs || []).map((d) => ({
-        id: d.id, name: d.name, desc: d.description, photo: photoOf(d.photos),
-        price: priceOf(d.discount_price) || priceOf(d.price), oldPrice: d.discount_price ? priceOf(d.price) : 0, available: d.is_available !== false,
-        options: (d.options || []).map((o) => ({
-          name: o.name, min: o.option_items && o.option_items.min_select, max: o.option_items && o.option_items.max_select,
-          items: ((o.option_items && o.option_items.items) || []).map((i) => ({ name: i.name, price: priceOf(i.price) })),
-        })),
-      })),
-    })),
-  });
-}
-
-// Also used for menus pasted by hand (from the console snippet) and menus browsers send back after a wipe.
-function normalizeMenu(m) {
-  const num = (x) => { const n = Number(x); return isFinite(n) && n > 0 ? Math.round(n) : 0; };
-  const img = (x) => /^https:\/\/[^\s"'<>]+$/.test(String(x || '')) ? str(x, 400) : '';
-  const categories = (Array.isArray(m.categories) ? m.categories : []).slice(0, 80).map((c, ci) => ({
-    name: str(c.name, 80) || 'Món',
-    dishes: (Array.isArray(c.dishes) ? c.dishes : []).slice(0, 300).map((d, di) => ({
-      id: str(d.id, 40) || ('d' + ci + '-' + di), name: str(d.name, 120), desc: str(d.desc, 200), photo: img(d.photo),
-      price: num(d.price), oldPrice: num(d.oldPrice) > num(d.price) ? num(d.oldPrice) : 0, available: d.available !== false,
-      options: (Array.isArray(d.options) ? d.options : []).slice(0, 12).map((o) => ({
-        name: str(o.name, 60), min: num(o.min), max: num(o.max),
-        items: (Array.isArray(o.items) ? o.items : []).slice(0, 40).map((i) => ({ name: str(i.name, 60), price: num(i.price) })),
-      })).filter((o) => o.items.length),
-    })).filter((d) => d.name),
+  const groups = (menu && menu.menu_infos) || [];
+  if (!groups.length) return null;
+  const seen = new Set();
+  const categories = groups.map((g) => ({
+    name: str(g.dish_type_name, 80) || 'Món',
+    dishes: (g.dishs || g.dishes || []).filter((d) => d && d.name && !seen.has(String(d.id)) && seen.add(String(d.id))).map((d) => {
+      const price = priceOf(d.discount_price) || priceOf(d.price);
+      const old = d.discount_price ? priceOf(d.price) : 0;
+      return {
+        id: str(d.id, 40), name: str(d.name, 120), desc: str(d.description, 200), photo: photoOf(d.photos),
+        price, oldPrice: old > price ? old : 0, available: d.is_available !== false,
+      };
+    }),
   })).filter((c) => c.dishes.length);
   if (!categories.length) return null;
-  return { sourceId: str(m.id, 40), name: str(m.name, 120) || 'Quán mới', address: str(m.address, 200), photo: img(m.photo), categories };
-}
-
-function storeShop(menu, url) {
-  const key = menu.sourceId ? 'sf-' + menu.sourceId.replace(/[^A-Za-z0-9_-]/g, '') : 'shop-' + crypto.randomBytes(4).toString('hex');
-  const prev = db.shops[key];
-  db.shops[key] = { key, ...menu, url: str(url, 300) || (prev && prev.url) || '', addedAt: prev ? prev.addedAt : Date.now(), updatedAt: Date.now() };
-  shopsChanged();
-  return db.shops[key];
-}
-
-// ---------- orders ----------
-const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' });
-function findDish(shopId, dishId) {
-  const shop = db.shops[shopId];
-  const dish = shop && shop.categories.flatMap((c) => c.dishes).find((d) => d.id === String(dishId));
-  return dish ? { shop, dish } : null;
-}
-// Turns the option indexes a browser sent into names and an extra price, computed from the stored menu.
-function pickOptions(dish, sel) {
-  sel = Array.isArray(sel) ? sel : [];
-  const picked = dish.options.map((o, gi) => {
-    const idx = [...new Set((Array.isArray(sel[gi]) ? sel[gi] : []).map(Number))].filter((i) => o.items[i]);
-    return { o, items: (o.max ? idx.slice(0, o.max) : idx).map((i) => o.items[i]) };
-  });
-  const missing = picked.find((g) => g.o.min && g.items.length < g.o.min);
-  if (missing) return { error: 'Hãy chọn “' + missing.o.name + '”.' };
   return {
-    extra: picked.reduce((s, g) => s + g.items.reduce((a, i) => a + i.price, 0), 0),
-    opts: picked.filter((g) => g.items.length).map((g) => g.items.map((i) => i.name).join(', ')).join(' · '),
+    key: String(did || rid), did: String(did || ''), rid: String(rid || ''),
+    name: str(det && det.name, 120) || 'Quán', address: str(det && det.address, 200), photo: photoOf(det && det.photos),
+    categories, updatedAt: Date.now(),
   };
+}
+
+async function loadShop(ref, url) {
+  const shop = await fetchShop(ref);
+  if (!shop) return null;
+  const prev = db.shops[shop.key];
+  db.shops[shop.key] = { ...shop, url: str(url, 300) || (prev && prev.url) || '', addedAt: prev ? prev.addedAt : Date.now() };
+  save();
+  return db.shops[shop.key];
 }
 
 // ---------- HTTP ----------
@@ -178,120 +162,115 @@ function send(res, code, body) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', (c) => { size += c.length; if (size > 3e6) { reject(new Error('too large')); req.destroy(); } else chunks.push(c); });
+    req.on('data', (c) => { size += c.length; if (size > 1e5) { reject(new Error('quá lớn')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
 }
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
-function serveStatic(req, res, pathname) {
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+function serveStatic(res, pathname) {
   const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname));
   if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('Không tìm thấy'); }
+    if (err) { // đường dẫn lạ (vd. /quan/123) cũng trả trang chính để mở đúng quán
+      return fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, html) => { res.writeHead(200, { 'content-type': MIME['.html'] }); res.end(html); });
+    }
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
     res.end(buf);
   });
 }
+const summary = (s) => ({ key: s.key, name: s.name, address: s.address, photo: s.photo, url: s.url, addedAt: s.addedAt,
+  count: Object.values(db.orders[s.key] || {}).reduce((n, who) => n + Object.values(who).reduce((a, b) => a + b, 0), 0) });
 
 const server = http.createServer(async (req, res) => {
-  const { pathname } = new URL(req.url, 'http://x');
+  const { pathname, searchParams } = new URL(req.url, 'http://x');
+  let m;
   try {
     if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { ok: true });
+    if (req.method === 'GET' && pathname === '/api/cities') return send(res, 200, { cities: CITIES });
 
-    if (req.method === 'GET' && pathname === '/api/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-      res.write('retry: 2000\n\n' + shopsMsg() + ordersMsg());
-      clients.add(res);
-      req.on('close', () => clients.delete(res));
-      return;
+    // Quán nhóm đã mở trước đây
+    if (req.method === 'GET' && pathname === '/api/shops') {
+      return send(res, 200, { shops: Object.values(db.shops).sort((a, b) => b.addedAt - a.addedAt).map(summary) });
     }
-
+    // Tìm quán trên ShopeeFood
+    if (req.method === 'GET' && pathname === '/api/search') {
+      const q = str(searchParams.get('q'), 80).trim();
+      const city = CITIES.find((c) => c.id === Number(searchParams.get('city'))) || CITIES[0];
+      if (!q) return send(res, 400, { error: 'Nhập tên quán hoặc món muốn tìm.' });
+      const results = await searchShops(q, city.id);
+      return send(res, 200, { results });
+    }
+    // Mở quán: từ link dán vào, hoặc từ kết quả tìm kiếm (did/rid)
     if (req.method === 'POST' && pathname === '/api/shops') {
-      const body = await readBody(req);
-      if (body.menu) { // menu pasted by hand, or sent back by a browser after a wipe
-        const menu = body.menu && body.menu.kind === 'dat-mon-chung/menu' ? normalizeMenu(body.menu) : null;
-        if (!menu) return send(res, 400, { error: 'Nội dung dán vào không phải menu hợp lệ.' });
-        return send(res, 200, { shop: storeShop(menu, body.menu.url || body.url) });
-      }
-      const link = await parseLink(body.url);
-      if (!link) return send(res, 400, { error: 'Link chưa đúng. Hãy dán link quán trên shopeefood.vn, ví dụ https://shopeefood.vn/ho-chi-minh/ten-quan' });
-      const menu = await fetchShop(link);
-      if (!menu) return send(res, 502, { error: 'Máy chủ chưa lấy được menu từ ShopeeFood. Dùng cách dự phòng bên dưới (mất khoảng 1 phút).', fallback: link });
-      return send(res, 200, { shop: storeShop(menu, body.url) });
+      const b = await readBody(req);
+      const ref = b.url ? await parseLink(b.url) : (b.did || b.rid) ? { did: str(b.did, 20).replace(/\D/g, ''), rid: str(b.rid, 20).replace(/\D/g, '') } : null;
+      if (!ref) return send(res, 400, { error: 'Link chưa đúng. Hãy dán link quán trên shopeefood.vn, ví dụ https://shopeefood.vn/ha-noi/ten-quan' });
+      const shop = await loadShop(ref, b.url);
+      if (!shop) return send(res, 502, { error: 'Chưa lấy được menu từ ShopeeFood. Thử lại sau ít phút.' });
+      return send(res, 200, { shop: summary(shop) });
     }
-
-    let m;
-    if (req.method === 'POST' && (m = pathname.match(/^\/api\/shops\/([\w-]+)\/refresh$/))) {
+    if (req.method === 'GET' && (m = pathname.match(/^\/api\/shops\/(\d+)$/))) {
       const shop = db.shops[m[1]];
       if (!shop) return send(res, 404, { error: 'Không thấy quán.' });
-      const link = (shop.sourceId && { rid: shop.sourceId }) || await parseLink(shop.url);
-      const menu = link && await fetchShop(link);
-      if (!menu) return send(res, 502, { error: 'Không lấy lại được menu lúc này.' });
-      return send(res, 200, { shop: storeShop(menu, shop.url) });
+      return send(res, 200, { shop, orders: db.orders[shop.key] || {} });
     }
-    if (req.method === 'DELETE' && (m = pathname.match(/^\/api\/shops\/([\w-]+)$/))) {
-      if (!db.shops[m[1]]) return send(res, 404, { error: 'Không thấy quán.' });
-      delete db.shops[m[1]];
-      db.orders = db.orders.filter((o) => o.shopId !== m[1]);
-      shopsChanged();
+    if (req.method === 'POST' && (m = pathname.match(/^\/api\/shops\/(\d+)\/refresh$/))) {
+      const shop = db.shops[m[1]];
+      if (!shop) return send(res, 404, { error: 'Không thấy quán.' });
+      const fresh = await loadShop({ did: shop.did, rid: shop.rid }, shop.url);
+      if (!fresh) return send(res, 502, { error: 'Không lấy lại được menu lúc này.' });
+      return send(res, 200, { shop: fresh });
+    }
+    if (req.method === 'GET' && (m = pathname.match(/^\/api\/shops\/(\d+)\/events$/))) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+      res.write('retry: 2000\ndata: ' + JSON.stringify({ orders: db.orders[m[1]] || {} }) + '\n\n');
+      if (!listeners.has(m[1])) listeners.set(m[1], new Set());
+      listeners.get(m[1]).add(res);
+      req.on('close', () => listeners.get(m[1]).delete(res));
+      return;
+    }
+    // Thêm/bớt món: {dish, name, delta} hoặc đặt hẳn số lượng {dish, name, qty}
+    if (req.method === 'POST' && (m = pathname.match(/^\/api\/shops\/(\d+)\/order$/))) {
+      const shop = db.shops[m[1]];
+      if (!shop) return send(res, 404, { error: 'Không thấy quán.' });
+      const b = await readBody(req);
+      const dish = shop.categories.flatMap((c) => c.dishes).find((d) => d.id === String(b.dish));
+      const name = str(b.name, 30).trim();
+      if (!dish) return send(res, 400, { error: 'Món này không còn trong menu.' });
+      if (!name) return send(res, 400, { error: 'Nhập tên bạn trước khi chọn món.' });
+      const orders = db.orders[shop.key] || (db.orders[shop.key] = {});
+      const line = orders[dish.id] || (orders[dish.id] = {});
+      const now = line[name] || 0;
+      const next = Math.max(0, Math.min(99, b.qty != null ? Math.round(Number(b.qty) || 0) : now + Math.round(Number(b.delta) || 0)));
+      if (next > now && !dish.available) return send(res, 400, { error: 'Quán đang hết món này.' });
+      if (next) line[name] = next; else delete line[name];
+      if (!Object.keys(line).length) delete orders[dish.id];
+      save(); push(shop.key);
+      return send(res, 200, { qty: next });
+    }
+    // Đổi tên: chuyển hết món của tên cũ sang tên mới
+    if (req.method === 'POST' && (m = pathname.match(/^\/api\/shops\/(\d+)\/rename$/))) {
+      const b = await readBody(req);
+      const from = str(b.from, 30).trim(), to = str(b.to, 30).trim();
+      const orders = db.orders[m[1]] || {};
+      if (from && to && from !== to) {
+        for (const line of Object.values(orders)) if (line[from]) { line[to] = Math.min(99, (line[to] || 0) + line[from]); delete line[from]; }
+        save(); push(m[1]);
+      }
+      return send(res, 200, { ok: true });
+    }
+    // Xoá đơn của quán (sau khi đã đặt xong)
+    if (req.method === 'POST' && (m = pathname.match(/^\/api\/shops\/(\d+)\/clear$/))) {
+      delete db.orders[m[1]];
+      save(); push(m[1]);
       return send(res, 200, { ok: true });
     }
 
-    // Adds `delta` (+1 / -1 / any) to this person's line for a dish with these options, made today.
-    // Creating, growing, shrinking and removing a line all go through here, so taps on +/− are instant for everyone.
-    if (req.method === 'POST' && pathname === '/api/orders/adjust') {
-      const b = await readBody(req);
-      const found = findDish(b.shopId, b.dishId);
-      if (!found) return send(res, 400, { error: 'Món này không còn trong menu.' });
-      const { shop, dish } = found;
-      const who = str(b.who, 40).trim();
-      const owner = str(b.clientId, 40);
-      if (!who || !owner) return send(res, 400, { error: 'Nhập tên bạn trước khi chọn món.' });
-      const delta = Math.max(-50, Math.min(50, Math.round(Number(b.delta) || 0)));
-      if (!delta) return send(res, 400, { error: 'Số lượng không hợp lệ.' });
-      const note = str(b.note, 120).trim();
-      let line = b.orderId ? db.orders.find((o) => o.id === String(b.orderId)) : null;
-      if (line && line.owner !== owner) return send(res, 403, { error: 'Chỉ người đặt mới sửa được món này.' });
-      if (!line) {
-        const p = pickOptions(dish, b.options);
-        if (p.error) return send(res, 400, p);
-        line = db.orders.find((o) => o.owner === owner && o.shopId === shop.key && o.dishId === dish.id && o.opts === p.opts && o.note === note && o.day === today());
-        if (!line) {
-          if (delta < 0) return send(res, 200, { ok: true });
-          if (!dish.available) return send(res, 400, { error: 'Quán đang tạm hết món này.' });
-          line = { id: crypto.randomBytes(6).toString('hex'), shopId: shop.key, dishId: dish.id, dish: dish.name, price: dish.price + p.extra, qty: 0, opts: p.opts, note, who, owner, at: Date.now(), day: today() };
-          db.orders.push(line);
-        }
-      }
-      line.qty = Math.min(99, line.qty + delta);
-      line.who = who;
-      if (line.qty <= 0) db.orders = db.orders.filter((o) => o !== line);
-      ordersChanged();
-      return send(res, 200, { order: line.qty > 0 ? line : null });
-    }
-    // Renaming yourself renames your lines for today, so the board never shows an old name.
-    if (req.method === 'POST' && pathname === '/api/rename') {
-      const b = await readBody(req);
-      const who = str(b.who, 40).trim(), owner = str(b.clientId, 40);
-      if (!who || !owner) return send(res, 400, { error: 'Tên trống.' });
-      let n = 0;
-      for (const o of db.orders) if (o.owner === owner && o.day === today() && o.who !== who) { o.who = who; n++; }
-      if (n) ordersChanged();
-      return send(res, 200, { renamed: n });
-    }
-    if (req.method === 'POST' && pathname === '/api/orders/clear') {
-      const b = await readBody(req);
-      const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []);
-      const before = db.orders.length;
-      db.orders = db.orders.filter((o) => !ids.has(o.id));
-      ordersChanged();
-      return send(res, 200, { removed: before - db.orders.length });
-    }
-
-    if (req.method === 'GET' && !pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return serveStatic(res, pathname);
     send(res, 404, { error: 'Không tìm thấy.' });
   } catch (e) {
+    console.warn(e);
     send(res, 400, { error: 'Yêu cầu không hợp lệ.' });
   }
 });
