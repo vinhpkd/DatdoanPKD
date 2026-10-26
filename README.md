@@ -22,7 +22,8 @@ Mở http://localhost:3000. Người cùng wifi vào bằng `http://<IP máy b�
 ## Chạy trên GitHub (Codespaces), không cần web nào khác
 
 1. Mở repo này trên github.com, bấm nút xanh **Code → Codespaces → Create codespace on main**.
-2. Đợi khoảng 1 phút. Web tự chạy, tab **Ports** hiện cổng `3000` với link dạng `https://<tên>-3000.app.github.dev`. Bấm vào để mở.
+2. Đợi khoảng 1 phút. Web tự chạy trong một tab Terminal tên `web`, tab **Ports** hiện cổng `3000` với link dạng `https://<tên>-3000.app.github.dev`. Bấm biểu tượng quả địa cầu để mở.
+   Nếu tab Ports trống: mở Terminal (`Ctrl + ~`), gõ `node server.js`, cổng 3000 sẽ hiện ra.
 3. Gửi link đó cho cả nhóm. Cổng đã được đặt **Public** nên ai cũng mở được, không cần tài khoản GitHub.
 
 Lần sau chỉ cần vào **Code → Codespaces**, bấm vào codespace cũ để bật lại (link giữ nguyên, quán và đơn vẫn còn).

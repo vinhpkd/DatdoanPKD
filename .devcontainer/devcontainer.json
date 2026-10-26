@@ -5,5 +5,8 @@
   "portsAttributes": {
     "3000": { "label": "Đặt Món Chung", "onAutoForward": "openBrowser" }
   },
-  "postStartCommand": "setsid nohup node server.js > /tmp/dat-mon-chung.log 2>&1 & sleep 2; gh codespace ports visibility 3000:public -c \"$CODESPACE_NAME\" || true"
+  "postAttachCommand": {
+    "web": "node server.js",
+    "public": "sleep 8 && gh codespace ports visibility 3000:public -c \"$CODESPACE_NAME\" || echo 'Mở tab Ports, chuột phải cổng 3000 → Port Visibility → Public'"
+  }
 }
