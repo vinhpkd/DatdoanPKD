@@ -1,42 +1,37 @@
 # Đặt Món Chung
 
-Trang web đặt đồ ăn chung cho nhóm. Dán link quán trên ShopeeFood, máy chủ lấy toàn bộ món (ảnh, giá, nhóm món) và hiện ngay dưới ô **Tìm món**, giống trang quán trên ShopeeFood.
+Web đặt đồ ăn chung cho nhóm, lấy dữ liệu thẳng từ ShopeeFood.
 
-- Tìm món gõ có dấu hay không dấu đều được ("com tam" ra "Cơm tấm").
-- Bấm **+** cạnh món là chọn, bấm **−** để bớt. Món có size/topping thì mở ô chọn tuỳ chọn.
-- Ngay dưới mỗi món hiện tên + số lượng của từng người đã chọn (ví dụ "Lan ×2"), cập nhật tức thì cho mọi người đang mở trang.
-- Bảng **Đơn chung hôm nay** gom theo người, tổng tiền, và danh sách gộp để copy đi đặt.
-- Thêm bao nhiêu quán cũng được, mỗi quán một tab, quán nào cũng chạy như trên.
+- **Chọn quán bất kỳ trên ShopeeFood:** chọn thành phố, gõ tên quán hoặc món (vd. "xôi", "bún chả"), bấm vào quán là mở menu. Hoặc dán link quán `shopeefood.vn/...`.
+- **Toàn bộ món hiện ngay dưới ô "Tìm món"**, chia theo nhóm món như trên ShopeeFood (ảnh, giá, giá giảm, món hết).
+- **Tìm món** gõ có dấu hay không dấu đều được.
+- **Ai đặt gì:** bấm **+ / −** cạnh món. Dưới mỗi món hiện tên + số lượng từng người (vd. "Lan ×2", "Minh ×1", "Tổng 3"), cập nhật tức thì cho mọi người đang mở trang.
+- **Đơn chung:** xem theo người hoặc gộp theo món, tổng tiền, nút copy đơn để đi đặt.
+- Quán nào cũng dùng được. Mỗi quán có link riêng (`/#/quan/<mã>`) để gửi cho cả nhóm.
 
-Không cần cài thư viện nào. Chỉ cần Node.js 18 trở lên.
+Không cần cài thư viện, chỉ cần Node.js 18 trở lên.
 
-## Chạy thử trên máy
+## Chạy trên máy
 
 ```bash
 node server.js
 ```
 
-Mở http://localhost:3000. Người cùng mạng wifi vào bằng `http://<IP máy bạn>:3000` (xem IP bằng `ipconfig` trên Windows hoặc `ipconfig getifaddr en0` trên Mac).
+Mở http://localhost:3000. Người cùng wifi vào bằng `http://<IP máy bạn>:3000`.
 
-Dữ liệu (quán, đơn) lưu ở `data/data.json`.
+## Chạy trên GitHub (Codespaces), không cần web nào khác
 
-## Đưa lên mạng để ai cũng vào được
+1. Mở repo này trên github.com, bấm nút xanh **Code → Codespaces → Create codespace on main**.
+2. Đợi khoảng 1 phút. Web tự chạy, tab **Ports** hiện cổng `3000` với link dạng `https://<tên>-3000.app.github.dev`. Bấm vào để mở.
+3. Gửi link đó cho cả nhóm. Cổng đã được đặt **Public** nên ai cũng mở được, không cần tài khoản GitHub.
 
-**Cách nhanh nhất: bấm nút này** (sau khi code đã nằm trên GitHub của bạn):
+Lần sau chỉ cần vào **Code → Codespaces**, bấm vào codespace cũ để bật lại (link giữ nguyên, quán và đơn vẫn còn).
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/vinhpkd/dat-mon-chung)
+Lưu ý: Codespace tự tắt sau 30 phút không ai dùng (đổi lên tối đa 4 giờ ở github.com/settings/codespaces, mục *Default idle timeout*). Tài khoản GitHub miễn phí có 60 giờ chạy mỗi tháng. Nếu cổng chưa Public: chuột phải cổng 3000 ở tab Ports, chọn *Port Visibility → Public*.
 
-Đăng nhập Render bằng GitHub, bấm *Apply*, đợi khoảng 2 phút là có link web. Nút này dùng file `render.yaml` có sẵn trong repo, không phải điền gì. Từ đó mỗi lần code trên GitHub thay đổi, Render tự cập nhật web.
+> GitHub Pages không chạy được web này: Pages chỉ chứa trang tĩnh, trình duyệt không được phép tự gọi API của ShopeeFood, và đơn chung tức thì cần một máy chủ (`server.js`).
 
-**Hoặc làm tay trên Render (miễn phí, không cần thẻ):**
-
-1. Vào https://render.com, bấm *Get Started* và đăng nhập bằng GitHub.
-2. Bấm *New → Blueprint*, chọn repo `dat-mon-chung`. Render đọc file `render.yaml` và tự điền hết cấu hình (gói Free, máy chủ Singapore).
-3. Bấm *Apply*, đợi khoảng 2 phút. Link web có dạng `https://dat-mon-chung-xxxx.onrender.com`, gửi link này cho mọi người.
-
-Lưu ý gói miễn phí: web "ngủ" sau 15 phút không ai vào, lần mở đầu tiên sau đó mất khoảng 30 đến 60 giây. Mỗi lần thức dậy, máy chủ mất dữ liệu đã lưu: đơn cũ mất, còn các quán sẽ tự được trình duyệt của người từng mở trang gửi lại. Trong giờ mọi người đang đặt thì web vẫn thức nên đơn không mất.
-
-**Muốn giữ dữ liệu lâu dài:** dùng gói trả phí có Disk của Render (gắn ở `/data`, đặt biến `DATA_DIR=/data`), hoặc Railway có Volume, hoặc chạy trên một VPS bằng `PORT=80 node server.js`.
+Muốn có link luôn sống thì có thể đưa repo lên Render (file `render.yaml` có sẵn: New → Blueprint → chọn repo).
 
 ## Biến môi trường
 
@@ -44,13 +39,10 @@ Lưu ý gói miễn phí: web "ngủ" sau 15 phút không ai vào, lần mở đ
 |---|---|---|
 | `PORT` | `3000` | Cổng chạy web |
 | `DATA_DIR` | `./data` | Thư mục lưu `data.json` |
-| `GAPP_BASE` | `https://gappapi.deliverynow.vn/api/` | Địa chỉ API của ShopeeFood |
+| `GAPP_BASE` | `https://gappapi.deliverynow.vn/api/` | API của ShopeeFood |
 
-## Nếu không lấy được menu tự động
+## Cách hoạt động
 
-Máy chủ gọi API công khai của ShopeeFood. Nếu ShopeeFood chặn máy chủ (ví dụ máy chủ đặt ở nước ngoài), trang sẽ hiện cách dự phòng: copy một đoạn mã, chạy trong Console trên trang quán, rồi dán kết quả vào. Chọn máy chủ đặt ở Singapore hoặc chạy trên máy tại Việt Nam sẽ ít bị chặn hơn.
+`server.js` gọi API công khai mà chính trang shopeefood.vn dùng: `delivery/search_global` + `delivery/get_infos` để tìm quán, `delivery/get_from_url` / `delivery/get_detail` để đọc link, `dish/get_delivery_dishes` để lấy menu. Đơn lưu ở `data/data.json`, cập nhật tức thì qua Server-Sent Events.
 
-## Lưu ý
-
-- Không có đăng nhập. Ai có link cũng đặt món, thêm quán, xoá đơn được. Mỗi người chỉ xoá được dòng mình đặt (nhận theo trình duyệt).
-- Giá tính theo menu đã lưu, chưa gồm phí ship và mã giảm giá. Bấm "Cập nhật menu" để lấy giá mới.
+Không có đăng nhập: ai có link cũng chọn món và xoá đơn được.

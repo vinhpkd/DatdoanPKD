@@ -1,7 +1,7 @@
 {
   "name": "dat-mon-chung",
-  "version": "1.0.0",
-  "description": "Trang đặt đồ ăn chung cho nhóm, lấy menu từ link ShopeeFood",
+  "version": "3.0.0",
+  "description": "Đặt đồ ăn chung cho nhóm: tìm quán bất kỳ trên ShopeeFood, cả nhóm chọn món, cập nhật tức thì",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
   "engines": { "node": ">=18" },

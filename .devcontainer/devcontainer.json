@@ -1,0 +1,9 @@
+{
+  "name": "Đặt Món Chung",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Đặt Món Chung", "onAutoForward": "openBrowser" }
+  },
+  "postStartCommand": "setsid nohup node server.js > /tmp/dat-mon-chung.log 2>&1 & sleep 2; gh codespace ports visibility 3000:public -c \"$CODESPACE_NAME\" || true"
+}
