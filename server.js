@@ -275,4 +275,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.log('Web đã chạy sẵn ở cổng ' + PORT + ', không cần chạy lại. Mở tab Ports để lấy link.');
+  process.exit(0);
+});
 server.listen(PORT, () => console.log('Đặt Món Chung đang chạy ở http://localhost:' + PORT));
